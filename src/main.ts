@@ -1,12 +1,13 @@
 import * as PIXI from "pixi.js";
-import { Live2DModel } from "pixi-live2d-display";
+import { Live2DModel } from "pixi-live2d-display/cubism4";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
-// Expose PIXI globally for pixi-live2d-display compatibility
 (window as any).PIXI = PIXI;
-// @ts-ignore - version mismatch between pixi v7 and pixi-live2d-display's pixi v6 types
 Live2DModel.registerTicker(PIXI.Ticker);
 
 const canvas = document.getElementById("live2d-canvas") as HTMLCanvasElement;
+const overlay = document.getElementById("drag-overlay")!;
 
 const app = new PIXI.Application({
   view: canvas,
@@ -15,62 +16,110 @@ const app = new PIXI.Application({
   antialias: true,
 });
 
-async function loadModel() {
-  const modelPath = "./model/atri.model3.json";
+let currentModel: any = null;
 
+const EXPRESSION_NAMES: Record<string, number> = {
+  "害羞": 0, "失去高光": 1, "吊带睡衣": 2, "内衣": 3,
+  "穿凉鞋": 4, "穿皮鞋": 5, "愣住": 6, "白框": 7,
+  "染血": 8, "小鸟": 9, "螃蟹": 10, "NO": 11,
+  "YES": 12, "睡衣2": 13, "阴影": 14,
+};
+
+function repositionModel(model: any) {
+  const w = app.screen.width;
+  const h = app.screen.height;
+  const scale = h / 2048 * 0.95;
+  model.scale.set(scale);
+  model.x = (w / 2) - (1220 * scale);
+  model.y = (h / 2) - (1050 * scale);
+}
+
+async function loadModel() {
   try {
-    const model = await Live2DModel.from(modelPath, {
+    const model = await Live2DModel.from("./model/atri_8.model3.json", {
       autoInteract: false,
     });
 
-    app.stage.addChild(model as unknown as PIXI.DisplayObject);
+    currentModel = model;
+    app.stage.addChild(model);
+    repositionModel(model);
 
-    const scale = Math.min(
-      canvas.width / model.width,
-      canvas.height / model.height
-    ) * 0.8;
-    model.scale.set(scale);
-    model.x = (canvas.width - model.width * scale) / 2;
-    model.y = (canvas.height - model.height * scale) / 2;
-
-    model.on("hit", (hitAreas: string[]) => {
-      if (hitAreas.includes("body") || hitAreas.includes("Body")) {
-        model.motion("tap_body");
-      } else if (hitAreas.includes("head") || hitAreas.includes("Head")) {
-        model.motion("flick_head");
-      }
+    window.addEventListener("resize", () => {
+      if (currentModel) repositionModel(currentModel);
     });
-
-    console.log("Live2D model loaded");
-  } catch (e) {
-    console.warn("No model found at", modelPath);
-    const text = new PIXI.Text("Place ATRI model\nin public/model/", {
-      fontFamily: "Arial",
-      fontSize: 18,
-      fill: 0xffffff,
-      align: "center",
-    });
-    text.anchor.set(0.5);
-    text.x = canvas.width / 2;
-    text.y = canvas.height / 2;
-    app.stage.addChild(text);
+  } catch (e: any) {
+    console.error("Failed to load model:", e);
   }
 }
 
-async function setupDrag() {
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  const appWindow = getCurrentWindow();
+// Drag: invoke Rust command directly
+overlay.addEventListener("mousedown", async (e) => {
+  if (e.button === 0) {
+    await invoke("start_drag");
+  }
+});
 
-  canvas.addEventListener("mousedown", (e) => {
-    if (e.button === 0) {
-      appWindow.startDragging();
-    }
-  });
-
-  canvas.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-  });
-}
+// Listen for lock state changes from Rust
+listen<boolean>("lock-changed", (event) => {
+  const locked = event.payload;
+  overlay.style.display = locked ? "none" : "block";
+});
 
 loadModel();
-setupDrag();
+
+// --- Expression & Motion event handlers ---
+listen("api:expression", (event: any) => {
+  if (!currentModel) return;
+  const { id, name } = event.payload;
+  if (id !== undefined) {
+    currentModel.expression(id - 1); // API uses 1-based
+  } else if (name && name in EXPRESSION_NAMES) {
+    currentModel.expression(EXPRESSION_NAMES[name]);
+  }
+});
+
+listen("api:motion", (event: any) => {
+  if (!currentModel) return;
+  const { group, index } = event.payload;
+  currentModel.motion(group, index ?? 0);
+});
+
+// --- Bubble text overlay ---
+const bubbleEl = document.getElementById("bubble")!;
+const bubbleText = document.getElementById("bubble-text")!;
+let bubbleTimer: number | null = null;
+let typewriterTimer: number | null = null;
+
+function showBubble(text: string, duration: number = 5000) {
+  if (bubbleTimer) clearTimeout(bubbleTimer);
+  if (typewriterTimer) clearInterval(typewriterTimer);
+  bubbleText.textContent = "";
+  bubbleEl.classList.remove("hidden");
+  let i = 0;
+  typewriterTimer = window.setInterval(() => {
+    if (i < text.length) {
+      bubbleText.textContent += text[i];
+      i++;
+    } else {
+      if (typewriterTimer) clearInterval(typewriterTimer);
+    }
+  }, 50);
+  bubbleTimer = window.setTimeout(() => {
+    bubbleEl.classList.add("hidden");
+  }, duration);
+}
+
+function hideBubble() {
+  if (bubbleTimer) clearTimeout(bubbleTimer);
+  if (typewriterTimer) clearInterval(typewriterTimer);
+  bubbleEl.classList.add("hidden");
+}
+
+// Expose for use by other modules (Task 5)
+(window as any).showBubble = showBubble;
+(window as any).hideBubble = hideBubble;
+
+listen("api:bubble", (event: any) => {
+  const { text, duration } = event.payload;
+  showBubble(text, duration ?? 5000);
+});

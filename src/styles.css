@@ -17,3 +17,51 @@ html, body {
   display: block;
   background: transparent;
 }
+
+#drag-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  border: 2px solid rgba(50, 120, 220, 0.5);
+  border-radius: 4px;
+  cursor: grab;
+}
+
+#drag-overlay:active {
+  cursor: grabbing;
+}
+
+.bubble {
+  position: fixed;
+  top: 8%;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 80%;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  font-family: "Hiragino Sans", "PingFang SC", sans-serif;
+  font-size: 14px;
+  color: #333;
+  z-index: 9000;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+
+.bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid rgba(255, 255, 255, 0.92);
+}
+
+.bubble.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
