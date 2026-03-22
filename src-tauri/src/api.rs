@@ -1,0 +1,217 @@
+use axum::{
+    Router,
+    extract::State,
+    http::StatusCode,
+    routing::{get, post},
+    Json,
+};
+use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
+use tauri::{AppHandle, Emitter};
+use tower_http::cors::CorsLayer;
+
+// ── Request types ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExpressionReq {
+    #[serde(default)]
+    pub id: Option<u32>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MotionReq {
+    pub group: String,
+    #[serde(default)]
+    pub index: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeakReq {
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub audio_url: Option<String>,
+    #[serde(default)]
+    pub expression: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BubbleReq {
+    pub text: String,
+    #[serde(default)]
+    pub duration: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LipsyncReq {
+    pub audio_url: String,
+}
+
+// ── Response type ────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct ApiResponse {
+    pub ok: bool,
+    pub message: String,
+}
+
+impl ApiResponse {
+    fn success(msg: impl Into<String>) -> Json<Self> {
+        Json(Self {
+            ok: true,
+            message: msg.into(),
+        })
+    }
+
+    fn error(msg: impl Into<String>) -> (StatusCode, Json<Self>) {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(Self {
+                ok: false,
+                message: msg.into(),
+            }),
+        )
+    }
+}
+
+// ── Expression list ──────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct ExpressionInfo {
+    pub id: u32,
+    pub name: String,
+}
+
+fn expression_list() -> Vec<ExpressionInfo> {
+    let entries: Vec<(u32, &str)> = vec![
+        (1, "害羞"),
+        (2, "失去高光"),
+        (3, "吊带睡衣"),
+        (4, "内衣"),
+        (5, "穿凉鞋"),
+        (6, "穿皮鞋"),
+        (7, "愣住"),
+        (8, "白框"),
+        (9, "染血"),
+        (10, "小鸟"),
+        (11, "螃蟹"),
+        (12, "NO"),
+        (13, "YES"),
+        (14, "睡衣2"),
+        (15, "阴影"),
+        (16, "exp_16"),
+        (17, "exp_17"),
+        (18, "exp_18"),
+        (19, "exp_19"),
+    ];
+    entries
+        .into_iter()
+        .map(|(id, name)| ExpressionInfo {
+            id,
+            name: name.to_string(),
+        })
+        .collect()
+}
+
+// ── Handlers ─────────────────────────────────────────────────────
+
+async fn status_handler() -> Json<ApiResponse> {
+    ApiResponse::success("ATRI Live2D API is running")
+}
+
+async fn expressions_handler() -> Json<Vec<ExpressionInfo>> {
+    Json(expression_list())
+}
+
+async fn expression_handler(
+    State(app): State<AppHandle>,
+    Json(payload): Json<ExpressionReq>,
+) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
+    if payload.id.is_none() && payload.name.is_none() {
+        return Err(ApiResponse::error("must provide id or name"));
+    }
+    app.emit("api:expression", &payload)
+        .map_err(|e| ApiResponse::error(format!("emit failed: {e}")))?;
+    Ok(ApiResponse::success("expression event emitted"))
+}
+
+async fn motion_handler(
+    State(app): State<AppHandle>,
+    Json(payload): Json<MotionReq>,
+) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
+    app.emit("api:motion", &payload)
+        .map_err(|e| ApiResponse::error(format!("emit failed: {e}")))?;
+    Ok(ApiResponse::success("motion event emitted"))
+}
+
+async fn speak_handler(
+    State(app): State<AppHandle>,
+    Json(payload): Json<SpeakReq>,
+) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
+    app.emit("api:speak", &payload)
+        .map_err(|e| ApiResponse::error(format!("emit failed: {e}")))?;
+    Ok(ApiResponse::success("speak event emitted"))
+}
+
+async fn bubble_handler(
+    State(app): State<AppHandle>,
+    Json(payload): Json<BubbleReq>,
+) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
+    app.emit("api:bubble", &payload)
+        .map_err(|e| ApiResponse::error(format!("emit failed: {e}")))?;
+    Ok(ApiResponse::success("bubble event emitted"))
+}
+
+async fn lipsync_start_handler(
+    State(app): State<AppHandle>,
+    Json(payload): Json<LipsyncReq>,
+) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
+    app.emit("api:lipsync:start", &payload)
+        .map_err(|e| ApiResponse::error(format!("emit failed: {e}")))?;
+    Ok(ApiResponse::success("lipsync start event emitted"))
+}
+
+async fn lipsync_stop_handler(
+    State(app): State<AppHandle>,
+) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
+    app.emit("api:lipsync:stop", ())
+        .map_err(|e| ApiResponse::error(format!("emit failed: {e}")))?;
+    Ok(ApiResponse::success("lipsync stop event emitted"))
+}
+
+// ── Router & Server ──────────────────────────────────────────────
+
+pub fn create_router(app_handle: AppHandle) -> Router {
+    Router::new()
+        .route("/status", get(status_handler))
+        .route("/expressions", get(expressions_handler))
+        .route("/expression", post(expression_handler))
+        .route("/motion", post(motion_handler))
+        .route("/speak", post(speak_handler))
+        .route("/bubble", post(bubble_handler))
+        .route("/lipsync/start", post(lipsync_start_handler))
+        .route("/lipsync/stop", post(lipsync_stop_handler))
+        .layer(CorsLayer::permissive())
+        .with_state(app_handle)
+}
+
+pub async fn start_server(app_handle: AppHandle) {
+    let port: u16 = std::env::var("ATRI_API_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3210);
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let router = create_router(app_handle);
+
+    println!("ATRI API server listening on http://{addr}");
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .expect("failed to bind ATRI API server");
+    axum::serve(listener, router)
+        .await
+        .expect("ATRI API server error");
+}
