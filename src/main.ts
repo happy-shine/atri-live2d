@@ -123,3 +123,102 @@ listen("api:bubble", (event: any) => {
   const { text, duration } = event.payload;
   showBubble(text, duration ?? 5000);
 });
+
+// --- Audio playback and lip sync ---
+let audioContext: AudioContext | null = null;
+let currentAudio: HTMLAudioElement | null = null;
+let analyserNode: AnalyserNode | null = null;
+let lipsyncActive = false;
+
+function startLipsync(audioUrl: string, onEnd?: () => void) {
+  stopLipsync();
+
+  if (!audioContext) {
+    audioContext = new AudioContext();
+  }
+
+  const audio = new Audio(audioUrl);
+  currentAudio = audio;
+
+  const source = audioContext.createMediaElementSource(audio);
+  const analyser = audioContext.createAnalyser();
+  analyser.fftSize = 256;
+  source.connect(analyser);
+  analyser.connect(audioContext.destination);
+  analyserNode = analyser;
+  lipsyncActive = true;
+
+  const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+  function updateMouth() {
+    if (!lipsyncActive || !analyserNode) return;
+    analyserNode.getByteFrequencyData(dataArray);
+
+    let sum = 0;
+    for (let i = 0; i < 32; i++) sum += dataArray[i];
+    const volume = sum / 32 / 255;
+
+    if (currentModel) {
+      const coreModel = (currentModel as any).internalModel?.coreModel;
+      if (coreModel) {
+        coreModel.setParameterValueById("ParamMouthOpenY", volume * 1.2);
+      }
+    }
+
+    requestAnimationFrame(updateMouth);
+  }
+
+  audio.addEventListener("ended", () => {
+    stopLipsync();
+    if (onEnd) onEnd();
+  });
+
+  audio.play();
+  updateMouth();
+}
+
+function stopLipsync() {
+  lipsyncActive = false;
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+  analyserNode = null;
+  if (currentModel) {
+    const coreModel = (currentModel as any).internalModel?.coreModel;
+    if (coreModel) {
+      coreModel.setParameterValueById("ParamMouthOpenY", 0);
+    }
+  }
+}
+
+listen("api:lipsync:start", (event: any) => {
+  const { audio_url } = event.payload;
+  startLipsync(audio_url);
+});
+
+listen("api:lipsync:stop", () => {
+  stopLipsync();
+});
+
+// --- Speak endpoint (combined) ---
+listen("api:speak", (event: any) => {
+  if (!currentModel) return;
+  const { text, audio_url, expression } = event.payload;
+
+  // Set expression if provided
+  if (expression !== undefined) {
+    currentModel.expression(expression - 1);
+  }
+
+  if (audio_url) {
+    // Show bubble, play audio with lip sync, hide bubble when done
+    showBubble(text, 999999);
+    startLipsync(audio_url, () => {
+      hideBubble();
+    });
+  } else {
+    // No audio: just show bubble with calculated duration
+    showBubble(text, Math.max(text.length * 150, 3000));
+  }
+});
