@@ -1,7 +1,9 @@
 use axum::{
     Router,
-    extract::State,
-    http::StatusCode,
+    body::Body,
+    extract::{Query, State},
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json,
 };
@@ -181,6 +183,39 @@ async fn lipsync_stop_handler(
     Ok(ApiResponse::success("lipsync stop event emitted"))
 }
 
+// ── Audio file serving ──────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct AudioQuery {
+    path: String,
+}
+
+async fn audio_handler(Query(q): Query<AudioQuery>) -> Response {
+    let path = std::path::Path::new(&q.path);
+    if !path.exists() {
+        return (StatusCode::NOT_FOUND, "file not found").into_response();
+    }
+
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("read error: {e}")).into_response(),
+    };
+
+    let content_type = match path.extension().and_then(|e| e.to_str()) {
+        Some("wav") => "audio/wav",
+        Some("mp3") => "audio/mpeg",
+        Some("ogg") => "audio/ogg",
+        Some("flac") => "audio/flac",
+        _ => "application/octet-stream",
+    };
+
+    Response::builder()
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .body(Body::from(bytes))
+        .unwrap()
+}
+
 // ── Router & Server ──────────────────────────────────────────────
 
 pub fn create_router(app_handle: AppHandle) -> Router {
@@ -193,6 +228,7 @@ pub fn create_router(app_handle: AppHandle) -> Router {
         .route("/bubble", post(bubble_handler))
         .route("/lipsync/start", post(lipsync_start_handler))
         .route("/lipsync/stop", post(lipsync_stop_handler))
+        .route("/audio", get(audio_handler))
         .layer(CorsLayer::permissive())
         .with_state(app_handle)
 }

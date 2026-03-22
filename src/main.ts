@@ -130,8 +130,21 @@ let currentAudio: HTMLAudioElement | null = null;
 let analyserNode: AnalyserNode | null = null;
 let lipsyncActive = false;
 
+function resolveAudioUrl(url: string): string {
+  // Convert file:// URLs and absolute paths to HTTP proxy
+  if (url.startsWith("file:///")) {
+    const path = url.slice(7); // remove file://
+    return `http://127.0.0.1:3210/audio?path=${encodeURIComponent(path)}`;
+  }
+  if (url.startsWith("/")) {
+    return `http://127.0.0.1:3210/audio?path=${encodeURIComponent(url)}`;
+  }
+  return url;
+}
+
 function startLipsync(audioUrl: string, onEnd?: () => void) {
   stopLipsync();
+  audioUrl = resolveAudioUrl(audioUrl);
 
   if (!audioContext) {
     audioContext = new AudioContext();

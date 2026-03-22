@@ -15,21 +15,22 @@
       {
         "label": "main",
         "title": "ATRI",
-        "width": 350,
-        "height": 450,
+        "width": 500,
+        "height": 750,
         "x": 1100,
         "y": 500,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
         "shadow": false,
-        "resizable": false,
+        "resizable": true,
         "skipTaskbar": true
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
