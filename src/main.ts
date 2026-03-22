@@ -150,7 +150,14 @@ function startLipsync(audioUrl: string, onEnd?: () => void) {
     audioContext = new AudioContext();
   }
 
-  const audio = new Audio(audioUrl);
+  // Resume AudioContext if suspended (autoplay policy)
+  if (audioContext.state === "suspended") {
+    audioContext.resume();
+  }
+
+  const audio = new Audio();
+  audio.crossOrigin = "anonymous";
+  audio.src = audioUrl;
   currentAudio = audio;
 
   const source = audioContext.createMediaElementSource(audio);
@@ -186,8 +193,20 @@ function startLipsync(audioUrl: string, onEnd?: () => void) {
     if (onEnd) onEnd();
   });
 
-  audio.play();
-  updateMouth();
+  audio.addEventListener("error", (e) => {
+    console.error("Audio error:", audio.error);
+    stopLipsync();
+    if (onEnd) onEnd();
+  });
+
+  audio.play().then(() => {
+    console.log("Audio playing:", audioUrl);
+    updateMouth();
+  }).catch((e) => {
+    console.error("Audio play failed:", e);
+    stopLipsync();
+    if (onEnd) onEnd();
+  });
 }
 
 function stopLipsync() {
