@@ -1,7 +1,8 @@
+use crate::config::AtriConfig;
 use axum::{
     Router,
     body::Body,
-    extract::{Query, State},
+    extract::{Path as AxumPath, Query, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -216,6 +217,43 @@ async fn audio_handler(Query(q): Query<AudioQuery>) -> Response {
         .unwrap()
 }
 
+// ── Model file serving from ~/.atri/model/ ──────────────────────
+
+async fn model_handler(AxumPath(path): AxumPath<String>) -> Response {
+    let model_dir = crate::config::atri_dir().join("model");
+    let file_path = model_dir.join(&path);
+
+    // Prevent path traversal
+    if !file_path.starts_with(&model_dir) {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+
+    if !file_path.exists() {
+        return (StatusCode::NOT_FOUND, "file not found").into_response();
+    }
+
+    let bytes = match std::fs::read(&file_path) {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("read error: {e}")).into_response(),
+    };
+
+    let content_type = match file_path.extension().and_then(|e| e.to_str()) {
+        Some("json") => "application/json",
+        Some("moc3") => "application/octet-stream",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("wav") => "audio/wav",
+        Some("mp3") => "audio/mpeg",
+        _ => "application/octet-stream",
+    };
+
+    Response::builder()
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .body(Body::from(bytes))
+        .unwrap()
+}
+
 // ── Router & Server ──────────────────────────────────────────────
 
 pub fn create_router(app_handle: AppHandle) -> Router {
@@ -229,16 +267,13 @@ pub fn create_router(app_handle: AppHandle) -> Router {
         .route("/lipsync/start", post(lipsync_start_handler))
         .route("/lipsync/stop", post(lipsync_stop_handler))
         .route("/audio", get(audio_handler))
+        .route("/model/{*path}", get(model_handler))
         .layer(CorsLayer::permissive())
         .with_state(app_handle)
 }
 
-pub async fn start_server(app_handle: AppHandle) {
-    let port: u16 = std::env::var("ATRI_API_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3210);
-
+pub async fn start_server(app_handle: AppHandle, config: AtriConfig) {
+    let port = config.api_port;
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let router = create_router(app_handle);
 

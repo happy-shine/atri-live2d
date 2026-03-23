@@ -1,4 +1,5 @@
 mod api;
+mod config;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
@@ -12,6 +13,19 @@ static LOCKED: AtomicBool = AtomicBool::new(true);
 #[tauri::command]
 fn start_drag(window: tauri::WebviewWindow) {
     let _ = window.start_dragging();
+}
+
+#[tauri::command]
+fn get_cursor_position(window: tauri::WebviewWindow) -> Result<(f64, f64), String> {
+    let cursor = window.cursor_position().map_err(|e| e.to_string())?;
+    let win_pos = window.outer_position().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().unwrap_or(2.0);
+    // cursor_position() returns absolute screen coords in physical pixels on macOS.
+    // Convert to logical pixels relative to window origin.
+    Ok((
+        (cursor.x - win_pos.x as f64) / scale,
+        (cursor.y - win_pos.y as f64) / scale,
+    ))
 }
 
 fn apply_lock_state(app_handle: &AppHandle, locked: bool) {
@@ -39,6 +53,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
+
+            // Restore saved window position & size
+            if let Some(state) = config::load_window_state() {
+                let _ = window.set_position(tauri::PhysicalPosition::new(state.x, state.y));
+                let _ = window.set_size(tauri::PhysicalSize::new(state.width, state.height));
+            }
+
             let _ = window.set_ignore_cursor_events(true);
 
             let toggle_i = MenuItem::with_id(app, "toggle", "Unlock", true, None::<&str>)?;
@@ -62,18 +83,33 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            let cfg = config::load_config();
+            println!("ATRI config dir: {}", config::atri_dir().display());
+
             let app_handle_clone = app.handle().clone();
             std::thread::spawn(move || {
                 tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .build()
                     .unwrap()
-                    .block_on(api::start_server(app_handle_clone));
+                    .block_on(api::start_server(app_handle_clone, cfg));
             });
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![start_drag])
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
+                if let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) {
+                    config::save_window_state(&config::WindowState {
+                        x: pos.x,
+                        y: pos.y,
+                        width: size.width,
+                        height: size.height,
+                    });
+                }
+            }
+        })
+        .invoke_handler(tauri::generate_handler![start_drag, get_cursor_position])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -28,15 +28,27 @@ const EXPRESSION_NAMES: Record<string, number> = {
 function repositionModel(model: any) {
   const w = app.screen.width;
   const h = app.screen.height;
-  const scale = h / 2048 * 0.95;
+  const scale = h / 2048 * 0.8;
   model.scale.set(scale);
   model.x = (w / 2) - (1220 * scale);
-  model.y = (h / 2) - (1050 * scale);
+  model.y = (h / 2) - (950 * scale);
 }
 
 async function loadModel() {
   try {
-    const model = await Live2DModel.from("./model/atri_8.model3.json", {
+    // Try loading from ~/.atri/model/ via API server, fall back to bundled
+    let modelUrl = "./model/atri_8.model3.json";
+    try {
+      const resp = await fetch("http://127.0.0.1:3210/model/atri_8.model3.json", { method: "HEAD" });
+      if (resp.ok) {
+        modelUrl = "http://127.0.0.1:3210/model/atri_8.model3.json";
+        console.log("Loading model from ~/.atri/model/");
+      }
+    } catch {
+      console.log("Loading bundled model");
+    }
+
+    const model = await Live2DModel.from(modelUrl, {
       autoInteract: false,
     });
 
@@ -66,6 +78,53 @@ listen<boolean>("lock-changed", (event) => {
 });
 
 loadModel();
+
+// --- Mouse tracking: model looks toward cursor ---
+let focusTargetX = 0;
+let focusTargetY = 0;
+let focusX = 0;
+let focusY = 0;
+
+// Poll cursor position relative to model center (works across monitors)
+setInterval(async () => {
+  if (!currentModel) return;
+  try {
+    // Returns logical pixels relative to window origin
+    const [cx, cy] = await invoke<[number, number]>("get_cursor_position");
+
+    // Model center in CSS pixels (PIXI world space)
+    const modelCenterX = currentModel.x + currentModel.width / 2;
+    const modelCenterY = currentModel.y + currentModel.height / 2;
+
+    // Direction from model center to cursor
+    const dx = cx - modelCenterX;
+    const dy = cy - modelCenterY;
+
+    // 300px from model center = full deflection, works for any cursor distance
+    const refDist = 300;
+    focusTargetX = Math.max(-1, Math.min(1, dx / refDist));
+    focusTargetY = Math.max(-1, Math.min(1, -dy / refDist));
+  } catch {
+    // cursor position unavailable
+  }
+}, 50);
+
+// Apply focus parameters on each frame after model's internal update
+app.ticker.add(() => {
+  if (!currentModel) return;
+  const coreModel = (currentModel as any).internalModel?.coreModel;
+  if (!coreModel) return;
+
+  // Smooth interpolation
+  focusX += (focusTargetX - focusX) * 0.15;
+  focusY += (focusTargetY - focusY) * 0.15;
+
+  coreModel.setParameterValueById("ParamAngleX", focusX * 30);
+  coreModel.setParameterValueById("ParamAngleY", focusY * 30);
+  coreModel.setParameterValueById("ParamEyeBallX", focusX);
+  coreModel.setParameterValueById("ParamEyeBallY", focusY);
+  coreModel.setParameterValueById("ParamBodyAngleX", focusX * 10);
+});
 
 // --- Expression & Motion event handlers ---
 listen("api:expression", (event: any) => {
@@ -193,7 +252,7 @@ function startLipsync(audioUrl: string, onEnd?: () => void) {
     if (onEnd) onEnd();
   });
 
-  audio.addEventListener("error", (e) => {
+  audio.addEventListener("error", (_e) => {
     console.error("Audio error:", audio.error);
     stopLipsync();
     if (onEnd) onEnd();

@@ -34,16 +34,17 @@ html, body {
 
 .bubble {
   position: fixed;
-  top: 8%;
+  top: 3%;
   left: 50%;
   transform: translateX(-50%);
-  max-width: 80%;
-  padding: 10px 16px;
-  background: rgba(255, 255, 255, 0.92);
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  max-width: 75%;
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 10px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
   font-family: "Hiragino Sans", "PingFang SC", sans-serif;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.4;
   color: #333;
   z-index: 9000;
   pointer-events: none;
@@ -53,12 +54,12 @@ html, body {
 .bubble::after {
   content: "";
   position: absolute;
-  bottom: -8px;
+  bottom: -6px;
   left: 50%;
   transform: translateX(-50%);
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-top: 8px solid rgba(255, 255, 255, 0.92);
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid rgba(255, 255, 255, 0.95);
 }
 
 .bubble.hidden {
