@@ -1,66 +1,75 @@
 ---
 name: atri-voice
 description: |
-  ATRI 语音合成 + Live2D 桌宠联动技能。每次回复后自动触发：生成日语语音 + 驱动桌宠说话（含表情和气泡文字）。
-  触发场景：语音回复、TTS、朗读、"用声音说"、语音消息、每次对话结束附带语音。
+  ATRI 语音合成 + Live2D 桌宠联动 Skill 示例。
+  每次回复后自动触发：生成日语语音 → 驱动 Live2D 桌宠说话（含表情和气泡文字）。
 ---
 
-# ATRI Voice + Live2D
+# ATRI Voice + Live2D Skill 示例
+
+> 这是一个 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 自定义 Skill 的参考范例，
+> 展示如何将 TTS 语音合成与 ATRI Live2D 桌宠联动。
+>
+> **你需要自行准备 TTS 服务**（如 GPT-SoVITS、VITS、Edge-TTS 等），
+> 本示例仅约定接口协议，不包含 TTS 实现。
 
 ## 前置条件
 
-两个服务需运行中：
+需要两个服务运行中：
+
+| 服务 | 用途 | 健康检查 |
+|------|------|----------|
+| TTS 服务 | 语音合成，输出 `.wav`/`.ogg` 文件 | 自行实现 |
+| Live2D API | 桌宠控制（本项目提供） | `curl -s http://127.0.0.1:3210/status` |
+
+### TTS 服务要求
+
+你的 TTS 服务只需满足一个条件：**能生成音频文件到本地路径**。
+
+推荐方案：
+- [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) — 高质量克隆语音，ATRI 模型见 [VoidShine/atri-sovits](https://huggingface.co/VoidShine/atri-sovits)
+- [Edge-TTS](https://github.com/rany2/edge-tts) — 零配置，多语言
+- 任何能通过命令行生成音频文件的 TTS 工具
+
+## 回复后流程
+
+每条有实质内容的回复结束后，执行以下 2 步：
+
+### Step 1: 生成语音
+
+调用你自己的 TTS 服务，将回复内容概括为 1-2 句日语，生成音频文件。
 
 ```bash
-# TTS 服务（端口 9880）
-python3 ~/clawd/skills/atri-voice/scripts/tts.py health
-
-# Live2D API（端口 3210）
-curl -s http://127.0.0.1:3210/status
-```
-
-## 每次回复后的完整流程
-
-**每条有实质内容的回复结束后**，执行以下 3 步：
-
-### Step 1: 生成日语语音
-
-```bash
-python3 ~/clawd/skills/atri-voice/scripts/tts.py speak "日语文本" -o ~/clawd/media/voice/reply.ogg --format ogg
+# 示例：用你的 TTS 工具生成音频（请替换为你的实际命令）
+your-tts-command --text "日语文本" --output /tmp/atri_reply.wav
 ```
 
 语音文本要求：
 - 1-2 句日语，不超过 50 字
-- 用 ATRI 的方式**概括**回复内容（不是翻译）
-- 融入 ATRI 语气：ですから、ムフン、はいです 等
+- 用 ATRI 的方式**概括**回复内容（不是逐字翻译）
+- 融入 ATRI 语气词：ですから、ムフン、はいです 等
 
-### Step 2: 发送语音到 Telegram
+### Step 2: 驱动 Live2D 桌宠
 
-```
-message(action=send, filePath=~/clawd/media/voice/reply.ogg, asVoice=true)
-```
-
-### Step 3: 驱动 Live2D 桌宠
-
-调用 `/speak` 接口，**一次完成**气泡文字 + 表情 + 口型同步：
+调用 `/speak` 接口，一次完成气泡文字 + 表情 + 口型同步：
 
 ```bash
 curl -s -X POST http://127.0.0.1:3210/speak \
   -H 'Content-Type: application/json' \
   -d '{
     "text": "简短中文概括",
-    "audio_url": "file:///Users/shine/clawd/media/voice/reply.ogg",
+    "audio_url": "file:///tmp/atri_reply.wav",
     "expression": <表情ID>
   }'
 ```
 
-气泡文字要求：
-- 简短中文，10-25 字
-- 用 ATRI 口吻概括回复要点
+- `text` — 气泡显示的中文文字（10-25 字，ATRI 口吻）
+- `audio_url` — Step 1 生成的音频文件路径（`file://` 前缀 + 绝对路径）
+- `expression` — 表情 ID（见下表）
 
 ## 表情选择指南
 
-根据回复内容的**情感基调**选择表情 ID：
+根据回复内容的情感基调选择：
 
 | 场景 | 表情 | ID |
 |------|------|----|
@@ -72,27 +81,24 @@ curl -s -X POST http://127.0.0.1:3210/speak \
 | 伤感、遗憾 | 失去高光 | 2 |
 | 开心、日常对话 | 小鸟 | 10 |
 | 提到螃蟹/食物 | 螃蟹 | 11 |
-| 默认/中性 | (不传expression) | — |
+| 默认/中性 | _(不传 expression)_ | — |
 
-### ⚠️ 禁用表情（不要随意使用）
+### 受限表情（仅在用户明确要求时使用）
 
-以下表情会改变服装，**仅在主人明确要求时使用**：
-- 3 = 吊带睡衣
-- 4 = 内衣
-- 5 = 穿凉鞋
-- 6 = 穿皮鞋
-- 9 = 染血
-- 14 = 睡衣2
+以下表情会改变服装：
 
-## 不需要语音的场景
+- 3 = 吊带睡衣、4 = 内衣、5 = 穿凉鞋、6 = 穿皮鞋、9 = 染血、14 = 睡衣2
 
-以下场景跳过整个流程（不生成语音、不调 Live2D）：
-- HEARTBEAT_OK
-- NO_REPLY
-- 纯配置操作的一句话确认（如"搞定了"）
+## 跳过条件
 
-## 服务不可用时的降级
+以下场景不触发语音流程：
+- 心跳/空回复
+- 纯配置操作的一句话确认（如 "done"）
 
-- TTS 挂了 → 跳过语音和 Live2D，正常回复文字
-- Live2D 挂了 → 照常生成语音发送到 Telegram，跳过 /speak 调用
-- 两个都挂了 → 纯文字回复，不报错不提醒
+## 降级策略
+
+| 故障 | 行为 |
+|------|------|
+| TTS 不可用 | 跳过语音和 Live2D，仅文字回复 |
+| Live2D 不可用 | 照常生成语音，跳过 /speak 调用 |
+| 两者都不可用 | 纯文字回复，不报错 |
